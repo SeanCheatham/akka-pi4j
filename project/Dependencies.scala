@@ -11,8 +11,12 @@ object Dependencies {
     val circe: ModuleID =
          "io.circe" %% "circe-core" % Versions.Circe
 
-    val pi4j: ModuleID =
-         "com.pi4j" % "pi4j-core" % Versions.Pi4j
+    val pi4j: Seq[ModuleID] =
+         Seq(
+             "com.pi4j" % "pi4j-core" % Versions.Pi4j,
+             "com.pi4j" % "pi4j-plugin-raspberrypi" % Versions.Pi4j,
+             "com.pi4j" % "pi4j-plugin-pigpio" % Versions.Pi4j
+         )
 }
 
 object Versions {
@@ -20,5 +24,5 @@ object Versions {
     val AkkaHttp = "10.2.4"
     val Cats = "2.6.1"
     val Circe = "0.15.0-M1"
-    val Pi4j = "1.4"
+    val Pi4j = "2.0-SNAPSHOT"
 }
