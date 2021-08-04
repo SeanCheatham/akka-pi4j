@@ -11,7 +11,7 @@ import com.pi4j.context.Context
 import com.pi4j.event.ShutdownEvent
 import com.pi4j.io.gpio.digital._
 
-import scala.concurrent.duration.{Duration, FiniteDuration}
+import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future, Promise}
 
 class AkkaPi4j()(implicit system: ActorSystem[_]) extends Extension {
@@ -31,17 +31,13 @@ class AkkaPi4j()(implicit system: ActorSystem[_]) extends Extension {
 
 object AkkaPi4j extends ExtensionId[AkkaPi4j] {
 
-  def out(id: String, pin: Int, initialState: DigitalState, shutdownState: DigitalState): Sink[OutCommand, Future[Done]] =
+  /**
+   * A Sink which accepts commands to change the state of an output pin
+   */
+  def out(config: DigitalOutputConfig): Sink[OutCommand, Future[Done]] =
     Sink.fromMaterializer {
       case (mat, _) =>
         val pi4j = AkkaPi4j(mat.system.toTyped).context
-        val config =
-          DigitalOutput.newConfigBuilder(pi4j)
-            .id(id)
-            .address(pin)
-            .initial(initialState)
-            .shutdown(shutdownState)
-            .provider("pigpio-digital-output")
 
         val out = pi4j.create(config)
 
@@ -60,25 +56,21 @@ object AkkaPi4j extends ExtensionId[AkkaPi4j] {
       .addAttributes(ActorAttributes.dispatcher("pi4j-dispatcher"))
       .mapMaterializedValue(_.flatten)
 
-  def in(id: String, pin: Int, pull: PullResistance, debounce: FiniteDuration): Source[DigitalState, NotUsed] =
+  /**
+   * A source that listens to changes in the state of an input pin
+   */
+  def in(config: DigitalInputConfig): Source[DigitalStateChangeEvent[DigitalInput], NotUsed] =
     Source.fromMaterializer { case (mat, _) =>
       implicit def materializer: Materializer = mat
 
       val pi4j = AkkaPi4j(mat.system.toTyped).context
-      val config =
-        DigitalInput.newConfigBuilder(pi4j)
-          .id(id)
-          .address(pin)
-          .pull(pull)
-          .debounce(debounce.toMicros)
-          .provider("pigpio-digital-output")
       val input = pi4j.create(config)
       val (queue, source) =
-        Source.queue[DigitalState](512, OverflowStrategy.dropHead)
+        Source.queue[DigitalStateChangeEvent[DigitalInput]](512, OverflowStrategy.dropHead)
           .preMaterialize()
-      val listener: DigitalStateChangeListener = event => Await.result(queue.offer(event.state()), Duration.Inf)
+      val listener: DigitalStateChangeListener = event => Await.result(queue.offer(event.asInstanceOf[DigitalStateChangeEvent[DigitalInput]]), Duration.Inf)
       input.addListener(listener)
-      Source.lazySingle(() => input.state()).concat(source).alsoTo(Sink.onComplete(_ => input.shutdown(pi4j)))
+      Source.lazySingle(() => new DigitalStateChangeEvent[DigitalInput](input, input.state())).concat(source).alsoTo(Sink.onComplete(_ => input.shutdown(pi4j)))
     }
       .addAttributes(ActorAttributes.dispatcher("pi4j-dispatcher"))
       .mapMaterializedValue(_ => NotUsed)
