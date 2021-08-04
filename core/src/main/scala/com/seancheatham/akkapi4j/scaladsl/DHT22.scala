@@ -7,6 +7,7 @@ import akka.stream.scaladsl.Source
 import akka.{Done, NotUsed}
 import com.pi4j.library.pigpio._
 
+import java.time.Instant
 import scala.concurrent.Future
 import scala.concurrent.duration.{FiniteDuration, _}
 import scala.util.Try
@@ -17,7 +18,7 @@ trait TemperatureReader {
 
 }
 
-case class TemperatureHumidity(temperatureF: Float, humidity: Float)
+case class TemperatureHumidity(temperatureF: Float, humidity: Float, timestamp: Instant)
 
 class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
 
@@ -34,14 +35,14 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
 
     var lastTick = 0L
     var index = 40
-    var CS: Int = null
+    var CS: Int = 0
     var humidity: Option[Float] = None
     var temperature: Option[Float] = None
 
-    var lowTemperatureByte: Int = null
-    var highTemperatureByte: Int = null
-    var lowHumidityByte: Int = null
-    var highHumidityByte: Int = null
+    var lowTemperatureByte: Int = 0
+    var highTemperatureByte: Int = 0
+    var lowHumidityByte: Int = 0
+    var highHumidityByte: Int = 0
 
     val listener: PiGpioStateChangeListener = {
       new PiGpioStateChangeListener {
@@ -51,7 +52,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
           level match {
             case 0 =>
               require(diff < 200)
-              val bitValue: Boolean = diff >= 50
+              val bitValue: Byte = if (diff >= 50) 1 else 0
               if (index >= 40) {
                 index = 40
               } else if (index >= 32) {
@@ -59,11 +60,11 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
                 if (index == 39) {
                   pigpio.removePinListener(pin, this)
                   val total: Int = highHumidityByte + lowHumidityByte + highTemperatureByte + lowTemperatureByte
-                  require(total & 255 == CS)
+                  require((total & 255) == CS)
                   humidity = Some(((highHumidityByte << 8) + lowHumidityByte) * 0.1f)
                   val temperatureMultiplier: Float =
-                    if (highTemperatureByte & 128 == CS) -0.1f else 0.1f
-                  if (highTemperatureByte & 128 == CS) highTemperatureByte &= 127
+                    if ((highTemperatureByte & 128) == CS) -0.1f else 0.1f
+                  if ((highTemperatureByte & 128) == CS) highTemperatureByte &= 127
                   temperature = Some(((highTemperatureByte << 8) + lowTemperatureByte) * temperatureMultiplier)
                 }
               } else if (index >= 24) {
@@ -104,7 +105,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
 
     require(temperature.nonEmpty, "Temperature not found")
     require(humidity.nonEmpty, "Humidity not found")
-    TemperatureHumidity(temperature.get, humidity.get)
+    TemperatureHumidity(temperature.get, humidity.get, Instant.now())
   }
 
 }

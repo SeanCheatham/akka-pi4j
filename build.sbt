@@ -2,7 +2,8 @@ inThisBuild(
   List(
     organization := "com.seancheatham",
     scalaVersion := "2.13.6",
-    resolvers += Resolver.sonatypeRepo("snapshots")
+    resolvers += Resolver.sonatypeRepo("snapshots"),
+    version := "0.0.1-SNAPSHOT"
   )
 )
 
