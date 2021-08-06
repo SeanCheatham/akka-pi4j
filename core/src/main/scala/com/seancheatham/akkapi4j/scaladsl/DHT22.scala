@@ -136,6 +136,8 @@ object DHT22 {
 class PiGpioProvider(system: ActorSystem[_]) extends Extension {
   val piGpio: PiGpio = PiGpio.newNativeInstance()
 
+  piGpio.initialise()
+
   CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "stop-pigpio") { () =>
     Future.fromTry(Try {
       piGpio.shutdown()
