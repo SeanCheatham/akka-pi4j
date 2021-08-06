@@ -12,21 +12,28 @@ import scala.concurrent.Future
 import scala.concurrent.duration.{FiniteDuration, _}
 import scala.util.Try
 
-trait TemperatureReader {
+trait ComfortReader {
 
-  def read(): TemperatureHumidity
+  def read(): Comfort
 
 }
 
-case class TemperatureHumidity(temperatureF: Float, humidity: Float, timestamp: Instant)
+case class Comfort(temperature: Temperature, humidity: Float, timestamp: Instant)
 
-class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
+class Temperature private (val fahrenheit: Float) {
+  def celsius: Float = (fahrenheit - 32) * (5 / 9)
+}
+
+object Temperature {
+  def f(temperature: Float) = new Temperature(temperature)
+  def c(temperature: Float) = new Temperature(temperature * (9 / 5) + 32)
+}
+
+class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
 
   pigpio.gpioSetPullUpDown(pin, PiGpioPud.OFF)
 
-  private val LongestZero = 50_000
-
-  override def read(): TemperatureHumidity = {
+  override def read(): Comfort = {
     pigpio.gpioInitialize()
     pigpio.gpioWrite(pin, PiGpioState.LOW)
     pigpio.gpioDelayMilliseconds(17)
@@ -35,7 +42,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
 
     var lastTick = 0L
     var index = 40
-    var CS: Int = 0
+    var checksum: Int = 0
     var humidity: Option[Float] = None
     var temperature: Option[Float] = None
 
@@ -44,27 +51,27 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
     var lowHumidityByte: Int = 0
     var highHumidityByte: Int = 0
 
-    val listener: PiGpioStateChangeListener = {
+    val listener: PiGpioStateChangeListener =
       new PiGpioStateChangeListener {
         override def onChange(event: PiGpioStateChangeEvent): Unit = {
-          val diff = event.tick() - lastTick
+          val timeDelta = event.tick() - lastTick
           val level = event.state().value()
           level match {
             case 0 =>
-              require(diff < 200)
-              val bitValue: Byte = if (diff >= 50) 1 else 0
+              require(timeDelta < 200)
+              val bitValue: Byte = if (timeDelta >= 50) 1 else 0
               if (index >= 40) {
                 index = 40
               } else if (index >= 32) {
-                CS = (CS << 1) + bitValue
+                checksum = (checksum << 1) + bitValue
                 if (index == 39) {
                   pigpio.removePinListener(pin, this)
                   val total: Int = highHumidityByte + lowHumidityByte + highTemperatureByte + lowTemperatureByte
-                  require((total & 255) == CS)
+                  require((total & 255) == checksum)
                   humidity = Some(((highHumidityByte << 8) + lowHumidityByte) * 0.1f)
                   val temperatureMultiplier: Float =
-                    if ((highTemperatureByte & 128) == CS) -0.1f else 0.1f
-                  if ((highTemperatureByte & 128) == CS) highTemperatureByte &= 127
+                    if ((highTemperatureByte & 128) == checksum) -0.1f else 0.1f
+                  if ((highTemperatureByte & 128) == checksum) highTemperatureByte &= 127
                   temperature = Some(((highTemperatureByte << 8) + lowTemperatureByte) * temperatureMultiplier)
                 }
               } else if (index >= 24) {
@@ -80,13 +87,13 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
               index += 1
             case 1 =>
               lastTick = event.tick()
-              if (diff > 250000) {
+              if (timeDelta > 250000) {
                 index = -2
                 highHumidityByte = 0
                 lowHumidityByte = 0
                 highTemperatureByte = 0
                 lowTemperatureByte = 0
-                CS = 0
+                checksum = 0
               }
 
             case _ =>
@@ -94,7 +101,6 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
           }
         }
       }
-    }
 
     pigpio.gpioWrite(pin, PiGpioState.LOW)
     pigpio.gpioDelayMilliseconds(17)
@@ -105,7 +111,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends TemperatureReader {
 
     require(temperature.nonEmpty, "Temperature not found")
     require(humidity.nonEmpty, "Humidity not found")
-    TemperatureHumidity(temperature.get, humidity.get, Instant.now())
+    Comfort(Temperature.f(temperature.get), humidity.get, Instant.now())
   }
 
 }
@@ -117,25 +123,25 @@ object DHT22 {
    */
   val readDelay: FiniteDuration = 2100.milli
 
-  def source(pin: Int): Source[TemperatureHumidity, Future[Cancellable]] =
-    Source.fromMaterializer {
-      case (mat, _) =>
-        val dht22 = new DHT22(pin)(PiGpioProvider(mat.system.toTyped).piGpio)
-        Source.tick(0.seconds, readDelay, NotUsed)
-          .map(_ => dht22.read())
-          .async("pi4j-dispatcher")
+  def source(pin: Int): Source[Comfort, Future[Cancellable]] =
+    Source.fromMaterializer { case (mat, _) =>
+      val dht22 = new DHT22(pin)(PiGpioProvider(mat.system.toTyped).piGpio)
+      Source
+        .tick(0.seconds, readDelay, NotUsed)
+        .map(_ => dht22.read())
+        .async("pi4j-dispatcher")
     }
 }
 
 class PiGpioProvider(system: ActorSystem[_]) extends Extension {
   val piGpio: PiGpio = PiGpio.newNativeInstance()
 
-  CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "stop-pigpio")(() => {
+  CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "stop-pigpio") { () =>
     Future.fromTry(Try {
       piGpio.shutdown()
       Done
     })
-  })
+  }
 }
 
 object PiGpioProvider extends ExtensionId[PiGpioProvider] {
