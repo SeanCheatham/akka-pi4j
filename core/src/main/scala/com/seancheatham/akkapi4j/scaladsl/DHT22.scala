@@ -36,7 +36,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
   override def read(): Comfort = {
     pigpio.gpioInitialize()
     pigpio.gpioWrite(pin, PiGpioState.LOW)
-    pigpio.gpioDelayMilliseconds(17)
+    Thread.sleep(17)
     pigpio.gpioSetMode(pin, PiGpioMode.INPUT)
     // TODO setWatchdog(pin, 200)
 
@@ -103,11 +103,11 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
       }
 
     pigpio.gpioWrite(pin, PiGpioState.LOW)
-    pigpio.gpioDelayMilliseconds(17)
+    Thread.sleep(17)
     pigpio.gpioWrite(pin, PiGpioState.HIGH)
     pigpio.gpioSetMode(pin, PiGpioMode.INPUT)
     pigpio.addPinListener(pin, listener)
-    pigpio.gpioDelayMilliseconds(200)
+    Thread.sleep(200)
 
     require(temperature.nonEmpty, "Temperature not found")
     require(humidity.nonEmpty, "Humidity not found")
