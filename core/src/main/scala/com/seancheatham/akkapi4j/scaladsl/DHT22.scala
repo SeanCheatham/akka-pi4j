@@ -10,7 +10,7 @@ import com.pi4j.library.pigpio._
 import java.time.Instant
 import scala.concurrent.Future
 import scala.concurrent.duration.{FiniteDuration, _}
-import scala.util.Try
+import scala.util.{Failure, Try}
 
 trait ComfortReader {
 
@@ -51,14 +51,18 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
     var lowHumidityByte: Int = 0
     var highHumidityByte: Int = 0
 
+    var exception: Option[Throwable] = None
+
     val listener: PiGpioStateChangeListener =
       new PiGpioStateChangeListener {
-        override def onChange(event: PiGpioStateChangeEvent): Unit = {
+        override def onChange(event: PiGpioStateChangeEvent): Unit = Try {
           val timeDelta = event.tick() - lastTick
           val level = event.state().value()
           level match {
             case 0 =>
-              require(timeDelta < 200)
+              if (timeDelta >= 50) {
+                checksum = 256
+              }
               val bitValue: Byte = if (timeDelta >= 50) 1 else 0
               if (index >= 40) {
                 index = 40
@@ -67,7 +71,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
                 if (index == 39) {
                   pigpio.removePinListener(pin, this)
                   val total: Int = highHumidityByte + lowHumidityByte + highTemperatureByte + lowTemperatureByte
-                  require((total & 255) == checksum)
+                  require((total & 255) != checksum, "Invalid Checksum")
                   humidity = Some(((highHumidityByte << 8) + lowHumidityByte) * 0.1f)
                   val temperatureMultiplier: Float =
                     if ((highTemperatureByte & 128) == checksum) -0.1f else 0.1f
@@ -87,7 +91,7 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
               index += 1
             case 1 =>
               lastTick = event.tick()
-              if (timeDelta > 250000) {
+              if (timeDelta > 250_000) {
                 index = -2
                 highHumidityByte = 0
                 lowHumidityByte = 0
@@ -99,6 +103,11 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
             case _ =>
               pigpio.removeListener(this)
           }
+        } match {
+          case Failure(e) =>
+            exception = Some(e)
+            pigpio.removeListener(this)
+          case _ =>
         }
       }
 
@@ -108,6 +117,8 @@ class DHT22(pin: Int)(implicit pigpio: PiGpio) extends ComfortReader {
     pigpio.gpioSetMode(pin, PiGpioMode.INPUT)
     pigpio.addPinListener(pin, listener)
     Thread.sleep(200)
+
+    exception.foreach(throw _)
 
     require(temperature.nonEmpty, "Temperature not found")
     require(humidity.nonEmpty, "Humidity not found")
